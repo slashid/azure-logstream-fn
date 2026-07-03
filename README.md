@@ -11,7 +11,7 @@ The official SlashID Azure Monitor forwarder consumes diagnostic logs from an Ev
 The button launches an Azure Resource Manager deployment that provisions the function app and event hub. You will be prompted for:
 
 - **Resource Group**: the target resource group in your Azure subscription.
-- **eventsToken** (required): your connection's events token, found in the SlashID console under Connection Details.
+- **eventsToken** (required): your connection's events token, found in the SlashID console under Connection Details. This is a `securestring` parameter — the portal masks it on input and it is not persisted in deployment history.
 - **baseName** (optional, default `slashid-logs`): a prefix used to name the resources this deployment creates.
 
 The `packageUri`, `forwarderVersion`, and `eventsEndpoint` parameters are pre-stamped/defaulted per release and should normally be left unchanged.
