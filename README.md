@@ -55,7 +55,7 @@ Checkpoint advancement is deferred until successful delivery to SlashID (`FixedD
 
 To run and test the forwarder locally:
 
-1. Create `local.settings.json` in the repository root with the five app-settings contract variables (see above) plus `AzureWebJobsStorage` for the local Azure Storage emulator:
+1. Create `local.settings.json` in the repository root with the six app-settings contract variables (five required plus the optional `FORWARDER_VERSION`; see above) plus `AzureWebJobsStorage` for the local Azure Storage emulator:
 
 ```json
 {

@@ -11,7 +11,11 @@ var host = new HostBuilder()
                 ?? throw new InvalidOperationException("SLASHID_EVENTS_ENDPOINT is required"),
             PushAuthToken: Environment.GetEnvironmentVariable("SLASHID_PUSH_AUTH_TOKEN")
                 ?? throw new InvalidOperationException("SLASHID_PUSH_AUTH_TOKEN is required")));
-        services.AddHttpClient<SlashIdClient>();
+        services.AddHttpClient<SlashIdClient>()
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+            });
         services.AddSingleton<ISlashIdDelivery>(sp => sp.GetRequiredService<SlashIdClient>());
     })
     .Build();
