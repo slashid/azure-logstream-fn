@@ -1,0 +1,154 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "eventsToken": {
+      "type": "securestring",
+      "metadata": { "description": "The connection's events token from the SlashID console (connection details page)." }
+    },
+    "baseName": {
+      "type": "string",
+      "defaultValue": "slashid-logs",
+      "maxLength": 20,
+      "metadata": { "description": "Prefix for the created resources." }
+    },
+    "eventsEndpoint": {
+      "type": "string",
+      "defaultValue": "https://api.slashid.com/ip/nhi/events/v2/microsoft_tenant/azure-monitor-logs",
+      "metadata": { "description": "SlashID azure-monitor-logs channel endpoint." }
+    },
+    "packageUri": {
+      "type": "string",
+      "defaultValue": "https://github.com/slashid/azure-logstream-fn/releases/download/v0.1.0/released-package.zip",
+      "metadata": { "description": "Forwarder package for this template's release. Stamped per release tag." }
+    },
+    "forwarderVersion": {
+      "type": "string",
+      "defaultValue": "0.1.0",
+      "metadata": { "description": "Bare version matching packageUri (no leading v). Stamped per release tag." }
+    }
+  },
+  "variables": {
+    "suffix": "[uniqueString(resourceGroup().id)]",
+    "namespaceName": "[concat(parameters('baseName'), '-', variables('suffix'))]",
+    "eventHubName": "slashid-logs",
+    "consumerGroup": "sid-fn",
+    "listenRuleName": "slashid-listen-rule",
+    "storageName": "[toLower(concat('sidfn', variables('suffix')))]",
+    "planName": "[concat(parameters('baseName'), '-plan-', variables('suffix'))]",
+    "functionAppName": "[concat(parameters('baseName'), '-fn-', variables('suffix'))]",
+    "deploymentContainer": "deployments",
+    "location": "[resourceGroup().location]",
+    "listenRuleId": "[resourceId('Microsoft.EventHub/namespaces/eventhubs/authorizationRules', variables('namespaceName'), variables('eventHubName'), variables('listenRuleName'))]",
+    "storageConnection": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageName'), ';AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-01-01').keys[0].value, ';EndpointSuffix=core.windows.net')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.EventHub/namespaces",
+      "apiVersion": "2024-01-01",
+      "name": "[variables('namespaceName')]",
+      "location": "[variables('location')]",
+      "sku": { "name": "Standard", "tier": "Standard", "capacity": 1 },
+      "properties": { "isAutoInflateEnabled": true, "maximumThroughputUnits": 20 }
+    },
+    {
+      "type": "Microsoft.EventHub/namespaces/eventhubs",
+      "apiVersion": "2024-01-01",
+      "name": "[concat(variables('namespaceName'), '/', variables('eventHubName'))]",
+      "dependsOn": ["[resourceId('Microsoft.EventHub/namespaces', variables('namespaceName'))]"],
+      "properties": { "retentionDescription": { "cleanupPolicy": "Delete", "retentionTimeInHours": 168 }, "partitionCount": 4 }
+    },
+    {
+      "type": "Microsoft.EventHub/namespaces/eventhubs/consumergroups",
+      "apiVersion": "2024-01-01",
+      "name": "[concat(variables('namespaceName'), '/', variables('eventHubName'), '/', variables('consumerGroup'))]",
+      "dependsOn": ["[resourceId('Microsoft.EventHub/namespaces/eventhubs', variables('namespaceName'), variables('eventHubName'))]"]
+    },
+    {
+      "type": "Microsoft.EventHub/namespaces/eventhubs/authorizationRules",
+      "apiVersion": "2024-01-01",
+      "name": "[concat(variables('namespaceName'), '/', variables('eventHubName'), '/', variables('listenRuleName'))]",
+      "dependsOn": ["[resourceId('Microsoft.EventHub/namespaces/eventhubs', variables('namespaceName'), variables('eventHubName'))]"],
+      "properties": { "rights": ["Listen"] }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('storageName')]",
+      "location": "[variables('location')]",
+      "sku": { "name": "Standard_LRS" },
+      "kind": "StorageV2",
+      "properties": { "allowBlobPublicAccess": false, "minimumTlsVersion": "TLS1_2" }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-01-01",
+      "name": "[concat(variables('storageName'), '/default/', variables('deploymentContainer'))]",
+      "dependsOn": ["[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"]
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2023-12-01",
+      "name": "[variables('planName')]",
+      "location": "[variables('location')]",
+      "kind": "functionapp",
+      "sku": { "name": "FC1", "tier": "FlexConsumption" },
+      "properties": { "reserved": true }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2023-12-01",
+      "name": "[variables('functionAppName')]",
+      "location": "[variables('location')]",
+      "kind": "functionapp,linux",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', variables('deploymentContainer'))]",
+        "[variables('listenRuleId')]"
+      ],
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
+        "functionAppConfig": {
+          "deployment": {
+            "storage": {
+              "type": "blobContainer",
+              "value": "[concat(reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-01-01').primaryEndpoints.blob, variables('deploymentContainer'))]",
+              "authentication": {
+                "type": "StorageAccountConnectionString",
+                "storageAccountConnectionStringName": "DEPLOYMENT_STORAGE_CONNECTION_STRING"
+              }
+            }
+          },
+          "scaleAndConcurrency": { "instanceMemoryMB": 512, "maximumInstanceCount": 4 },
+          "runtime": { "name": "dotnet-isolated", "version": "10.0" }
+        },
+        "siteConfig": {
+          "appSettings": [
+            { "name": "AzureWebJobsStorage", "value": "[variables('storageConnection')]" },
+            { "name": "DEPLOYMENT_STORAGE_CONNECTION_STRING", "value": "[variables('storageConnection')]" },
+            { "name": "EventHubConnection", "value": "[listKeys(variables('listenRuleId'), '2024-01-01').primaryConnectionString]" },
+            { "name": "EVENTHUB_NAME", "value": "[variables('eventHubName')]" },
+            { "name": "EVENTHUB_CONSUMER_GROUP", "value": "[variables('consumerGroup')]" },
+            { "name": "SLASHID_EVENTS_ENDPOINT", "value": "[parameters('eventsEndpoint')]" },
+            { "name": "SLASHID_PUSH_AUTH_TOKEN", "value": "[parameters('eventsToken')]" },
+            { "name": "FORWARDER_VERSION", "value": "[parameters('forwarderVersion')]" }
+          ]
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites/extensions",
+      "apiVersion": "2022-09-01",
+      "name": "[concat(variables('functionAppName'), '/onedeploy')]",
+      "dependsOn": ["[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"],
+      "properties": { "packageUri": "[parameters('packageUri')]", "remoteBuild": false }
+    }
+  ],
+  "outputs": {
+    "eventHubId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.EventHub/namespaces/eventhubs', variables('namespaceName'), variables('eventHubName'))]"
+    },
+    "eventHubNamespaceName": { "type": "string", "value": "[variables('namespaceName')]" }
+  }
+}
