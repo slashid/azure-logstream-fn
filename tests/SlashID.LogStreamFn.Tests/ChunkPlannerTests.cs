@@ -70,4 +70,25 @@ public class ChunkPlannerTests
     {
         Assert.ThrowsAny<JsonException>(() => ChunkPlanner.Plan("not json"));
     }
+
+    [Fact]
+    public void SingleOversizedObjectBodyIsDropped()
+    {
+        var body = $$"""{"operationName":"Sign-in activity","pad":"{{new string('x', 900_000)}}"}""";
+        var plan = ChunkPlanner.Plan(body);
+        Assert.Equal(1, plan.DroppedRecords);
+        Assert.Empty(plan.Bodies);
+    }
+
+    [Fact]
+    public void RecordsPropertyNotAnArrayIsDroppedNotThrown()
+    {
+        // Oversized body whose top-level shape looks right ("records" property present)
+        // but is an object, not an array — unsplittable, must be a deterministic drop,
+        // not an unhandled InvalidOperationException from EnumerateArray().
+        var body = $$$"""{"records":{"pad":"{{{new string('x', 900_000)}}}"}}""";
+        var plan = ChunkPlanner.Plan(body);
+        Assert.Equal(1, plan.DroppedRecords);
+        Assert.Empty(plan.Bodies);
+    }
 }

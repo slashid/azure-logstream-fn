@@ -26,12 +26,15 @@ public static class ChunkPlanner
 
         var root = doc.RootElement;
         JsonElement records;
-        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("records", out var r))
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("records", out var r) && r.ValueKind == JsonValueKind.Array)
             records = r;
         else if (root.ValueKind == JsonValueKind.Array)
             records = root;
         else
-            // A single JSON object bigger than the cap: pathological; drop it.
+            // Oversized and unsplittable: a single JSON object bigger than the cap,
+            // or a "records" property present but not an array. Can't be forwarded
+            // verbatim (it already failed the size check above) and can't be split;
+            // count it as dropped rather than throw.
             return new ChunkPlan(new List<string>(), 1);
 
         var bodies = new List<string>();
