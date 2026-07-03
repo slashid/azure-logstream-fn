@@ -24,10 +24,30 @@ jobs:
       - name: Template pins match the tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          grep -q "releases/download/${GITHUB_REF_NAME}/released-package.zip" azuredeploy.json \
-            || { echo "azuredeploy.json packageUri default does not match tag ${GITHUB_REF_NAME}"; exit 1; }
-          grep -q "\"defaultValue\": \"${GITHUB_REF_NAME#v}\"" azuredeploy.json \
-            || { echo "azuredeploy.json forwarderVersion default does not match ${GITHUB_REF_NAME#v}"; exit 1; }
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+
+          package_uri="$(jq -r '.parameters.packageUri.defaultValue' azuredeploy.json)"
+          case "$package_uri" in
+            */releases/download/"${tag}"/released-package.zip) ;;
+            *) echo "azuredeploy.json packageUri default ($package_uri) does not match tag ${tag}"; exit 1 ;;
+          esac
+
+          forwarder_version="$(jq -r '.parameters.forwarderVersion.defaultValue' azuredeploy.json)"
+          if [[ "$forwarder_version" != "$version" ]]; then
+            echo "azuredeploy.json forwarderVersion default ($forwarder_version) does not match ${version}"
+            exit 1
+          fi
+
+          # README Deploy-to-Azure button embeds the raw.githubusercontent.com URL
+          # for this tag (URL-encoded slashes); make sure it wasn't left pinned to
+          # a stale release.
+          readme_needle="%2F${tag}%2Fazuredeploy.json"
+          if ! grep -qF "$readme_needle" README.md; then
+            echo "README Deploy-to-Azure button does not reference tag ${tag} (expected to contain: ${readme_needle})"
+            exit 1
+          fi
       - run: dotnet build --configuration Release -p:Version=${{ steps.version.outputs.version }}
       - run: dotnet test --configuration Release --no-build
       - name: Package
@@ -42,6 +62,7 @@ jobs:
           path: |
             released-package.zip
             released-package.zip.sha256
+          overwrite: true
 
   stage-release:
     if: startsWith(github.ref, 'refs/tags/v')
