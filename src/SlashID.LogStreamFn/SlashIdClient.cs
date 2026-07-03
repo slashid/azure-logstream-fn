@@ -61,7 +61,12 @@ public class SlashIdClient : ISlashIdDelivery
                 last = new SlashIdDeliveryException(
                     $"SlashID returned {(int)resp.StatusCode} on attempt {attempt + 1}");
             }
-            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            // Only treat TaskCanceledException as a retryable transient failure when it
+            // did NOT originate from the caller's own token (e.g. an HttpClient-internal
+            // send timeout instead). A genuine caller-driven cancellation must propagate
+            // as OperationCanceledException, not be swallowed into a retry/delivery
+            // exception — the caller (and its checkpoint semantics) needs to see it.
+            catch (Exception ex) when ((ex is HttpRequestException or TaskCanceledException) && !ct.IsCancellationRequested)
             {
                 last = ex;
             }

@@ -9,12 +9,14 @@ public class SlashIdClientTests
         public List<HttpRequestMessage> Requests = new();
         public List<string> Bodies = new();
         public Queue<HttpStatusCode> Responses = new();
+        public Queue<Exception> Throws = new();
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken ct)
         {
             Requests.Add(request);
             Bodies.Add(await request.Content!.ReadAsStringAsync(ct));
+            if (Throws.Count > 0) throw Throws.Dequeue();
             var code = Responses.Count > 0 ? Responses.Dequeue() : HttpStatusCode.OK;
             return new HttpResponseMessage(code);
         }
@@ -71,5 +73,38 @@ public class SlashIdClientTests
         await Assert.ThrowsAsync<SlashIdDeliveryException>(
             () => client.PostBodyAsync("[]", CancellationToken.None));
         Assert.Equal(3, handler.Requests.Count); // initial + 2 retries (test delays array)
+    }
+
+    [Fact]
+    public async Task RetriesNetworkExceptionThenThrowsDeliveryException_NoLossPreserved()
+    {
+        // Regression guard for the cancellation fix below: a genuine, non-cancellation
+        // exception (e.g. a dropped connection) must still be retried and still end in
+        // SlashIdDeliveryException — the no-loss contract must not weaken.
+        var (client, handler) = Make();
+        handler.Throws.Enqueue(new HttpRequestException("connection reset"));
+        handler.Throws.Enqueue(new HttpRequestException("connection reset"));
+        handler.Throws.Enqueue(new HttpRequestException("connection reset"));
+
+        await Assert.ThrowsAsync<SlashIdDeliveryException>(
+            () => client.PostBodyAsync("[]", CancellationToken.None));
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task CancelledTokenPropagatesCancellation_NotSwallowedAsDeliveryException()
+    {
+        // A genuine caller-driven cancellation must surface as OperationCanceledException,
+        // not be caught by the HttpRequestException/TaskCanceledException retry filter and
+        // turned into a SlashIdDeliveryException — and it must not keep retrying.
+        var (client, handler) = Make();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => client.PostBodyAsync("[]", cts.Token));
+
+        Assert.IsNotType<SlashIdDeliveryException>(ex);
+        Assert.True(handler.Requests.Count <= 1); // no retry loop was entered
     }
 }
