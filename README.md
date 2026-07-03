@@ -2,7 +2,7 @@
 
 ## What this is
 
-The official SlashID Azure Monitor forwarder consumes diagnostic logs from an Event Hub receiving Azure Monitor and Entra identity events and POSTs them to SlashID's `azure-monitor-logs` channel for identity analytics. This forwarder is deployed either automatically by SlashID when a connection has the required elevated grants and event streaming is enabled, or by the customer using the Deploy to Azure button below.
+The official SlashID Azure Monitor forwarder consumes diagnostic logs from an Event Hub receiving Azure Monitor and Entra identity events. It POSTs them to SlashID's `azure-monitor-logs` channel for identity analytics. This forwarder is deployed either automatically by SlashID when a connection has the required elevated grants and event streaming is enabled, or by the customer using the Deploy to Azure button below.
 
 ## Deploy to Azure
 
@@ -11,14 +11,16 @@ The official SlashID Azure Monitor forwarder consumes diagnostic logs from an Ev
 The button launches an Azure Resource Manager deployment that provisions the function app and event hub. You will be prompted for:
 
 - **Resource Group**: the target resource group in your Azure subscription.
-- **Function App Name**: a globally unique name for the forwarder function.
-- **eventsToken**: your connection's events token, found in the SlashID console under Connection Details.
+- **eventsToken** (required): your connection's events token, found in the SlashID console under Connection Details.
+- **baseName** (optional, default `slashid-logs`): a prefix used to name the resources this deployment creates.
+
+The `packageUri`, `forwarderVersion`, and `eventsEndpoint` parameters are pre-stamped/defaulted per release and should normally be left unchanged.
 
 After deployment, create an **Entra ID diagnostic setting** in the Azure portal to stream logs to the created event hub:
 
 1. Go to Azure AD → Diagnostic Settings → Add Diagnostic Setting.
 2. Select **SignInLogs**, **NonInteractiveUserSignInLogs**, **ServicePrincipalSignInLogs**, and **MicrosoftGraphActivityLogs**.
-3. Send to the **Event Hub** created by this deployment, in the `slashid-logs` namespace.
+3. Send to the **`slashid-logs`** event hub, inside the Event Hub namespace this deployment created (named `<baseName>-<suffix>`).
 
 For guided setup, see the [SlashID Dev Portal Microsoft Onboarding guide](https://dev.slashid.com).
 
@@ -37,7 +39,7 @@ The following environment variables configure the forwarder and must match acros
 
 ## Reliability model
 
-The forwarder ensures no loss of diagnostic logs under normal circumstances. Checkpoint advancement is deferred until successful delivery to SlashID (`FixedDelayRetry(-1)` retries indefinitely). If SlashID is unreachable, backpressure accumulates into Event Hub retention, preventing loss. Duplicate delivery is possible on redelivery following a transient failure. The only record drop occurs when a single diagnostic log exceeds the 1 MiB receiver size limit, which is reported via a `record_dropped` control event sent to SlashID.
+Checkpoint advancement is deferred until successful delivery to SlashID (`FixedDelayRetry(-1)` retries indefinitely). If SlashID is unreachable, backpressure accumulates into Event Hub retention, preventing loss. Duplicate delivery is possible on redelivery following a transient failure. The only record drop occurs when a single diagnostic log exceeds the 1 MiB receiver size limit, which is reported via a `record_dropped` control event sent to SlashID.
 
 ## Release flow
 
@@ -70,6 +72,8 @@ To run and test the forwarder locally:
   }
 }
 ```
+
+`FORWARDER_VERSION` is optional; it's only used for reporting the running version in heartbeat control events.
 
 2. Start the forwarder with `func start`.
 3. Run the full test suite with `dotnet test`.
