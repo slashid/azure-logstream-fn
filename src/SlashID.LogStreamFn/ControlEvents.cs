@@ -35,6 +35,6 @@ public static class ControlEvents
             ["data"] = data,
             ["dataVersion"] = "1.0",
         };
-        return "[" + JsonSerializer.Serialize(envelope) + "]";
+        return JsonSerializer.Serialize(new[] { envelope });
     }
 }

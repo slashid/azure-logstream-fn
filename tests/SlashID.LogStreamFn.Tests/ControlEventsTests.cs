@@ -23,4 +23,21 @@ public class ControlEventsTests
         Assert.Equal(3, env.GetProperty("data").GetProperty("droppedRecords").GetInt32());
         Assert.Equal("record exceeds receiver body cap", env.GetProperty("data").GetProperty("reason").GetString());
     }
+
+    [Fact]
+    public void EnvelopeIsAProperSingleElementJsonArray_NotStringConcatenated()
+    {
+        // Guards against regressing to "[" + Serialize(envelope) + "]" string
+        // concatenation, which is not guaranteed to emit well-formed JSON for
+        // arbitrary content; the envelope must be produced by serializing an
+        // actual one-element array so escaping is always handled correctly.
+        var reason = "reason with \"quotes\", [brackets], a backslash \\, and é unicode";
+        var json = ControlEvents.RecordDropped(2, reason);
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(JsonValueKind.Array, doc.RootElement.ValueKind);
+        Assert.Equal(1, doc.RootElement.GetArrayLength());
+        var env = Assert.Single(doc.RootElement.EnumerateArray().ToList());
+        Assert.Equal(reason, env.GetProperty("data").GetProperty("reason").GetString());
+    }
 }
