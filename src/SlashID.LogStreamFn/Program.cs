@@ -10,7 +10,11 @@ var host = new HostBuilder()
             EventsEndpoint: Environment.GetEnvironmentVariable("SLASHID_EVENTS_ENDPOINT")
                 ?? throw new InvalidOperationException("SLASHID_EVENTS_ENDPOINT is required"),
             PushAuthToken: Environment.GetEnvironmentVariable("SLASHID_PUSH_AUTH_TOKEN")
-                ?? throw new InvalidOperationException("SLASHID_PUSH_AUTH_TOKEN is required")));
+                ?? throw new InvalidOperationException("SLASHID_PUSH_AUTH_TOKEN is required"),
+            MaxConcurrentDeliveries:
+                int.TryParse(Environment.GetEnvironmentVariable("MAX_CONCURRENT_DELIVERIES"), out var mcd) && mcd > 0
+                    ? mcd
+                    : 4));
         services.AddHttpClient<SlashIdClient>()
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
             {

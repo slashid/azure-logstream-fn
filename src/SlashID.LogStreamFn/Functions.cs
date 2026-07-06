@@ -7,10 +7,10 @@ public class Functions
     private readonly Forwarder _forwarder;
     private readonly ISlashIdDelivery _delivery;
 
-    public Functions(ISlashIdDelivery delivery)
+    public Functions(ISlashIdDelivery delivery, ForwarderConfig config)
     {
         _delivery = delivery;
-        _forwarder = new Forwarder(delivery);
+        _forwarder = new Forwarder(delivery, config.MaxConcurrentDeliveries);
     }
 
     // MaxRetryCount -1 = retry forever; the EH checkpoint is deferred until the
