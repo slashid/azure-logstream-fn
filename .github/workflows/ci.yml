@@ -1,0 +1,86 @@
+name: ci
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  build-test-package:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+      - name: Resolve version from tag
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Template pins match the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+
+          package_uri="$(jq -r '.parameters.packageUri.defaultValue' azuredeploy.json)"
+          case "$package_uri" in
+            */releases/download/"${tag}"/released-package.zip) ;;
+            *) echo "azuredeploy.json packageUri default ($package_uri) does not match tag ${tag}"; exit 1 ;;
+          esac
+
+          forwarder_version="$(jq -r '.parameters.forwarderVersion.defaultValue' azuredeploy.json)"
+          if [[ "$forwarder_version" != "$version" ]]; then
+            echo "azuredeploy.json forwarderVersion default ($forwarder_version) does not match ${version}"
+            exit 1
+          fi
+
+          # README Deploy-to-Azure button embeds the raw.githubusercontent.com URL
+          # for this tag (URL-encoded slashes); make sure it wasn't left pinned to
+          # a stale release.
+          readme_needle="%2F${tag}%2Fazuredeploy.json"
+          if ! grep -qF "$readme_needle" README.md; then
+            echo "README Deploy-to-Azure button does not reference tag ${tag} (expected to contain: ${readme_needle})"
+            exit 1
+          fi
+      - run: dotnet build --configuration Release -p:Version=${{ steps.version.outputs.version }}
+      - run: dotnet test --configuration Release --no-build
+      - name: Package
+        run: |
+          dotnet publish src/SlashID.LogStreamFn --configuration Release \
+            -p:Version=${{ steps.version.outputs.version }} --output publish
+          cd publish && zip -r ../released-package.zip . && cd ..
+          sha256sum released-package.zip > released-package.zip.sha256
+      - uses: actions/upload-artifact@v7
+        with:
+          name: released-package
+          path: |
+            released-package.zip
+            released-package.zip.sha256
+          overwrite: true
+
+  stage-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-test-package
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: released-package
+      # STAGED release: always a pre-release. Promotion to a published release
+      # is a manual act after sandbox validation — see README. Pre-release
+      # assets ARE anonymously fetchable at the versioned URL (required for
+      # sandbox One Deploy validation); draft releases would not be.
+      - uses: softprops/action-gh-release@v3
+        with:
+          prerelease: true
+          files: |
+            released-package.zip
+            released-package.zip.sha256
